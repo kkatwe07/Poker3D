@@ -6,7 +6,6 @@ using service;
 using UnityEngine;
 using Utils;
 using view;
-using Random = UnityEngine.Random;
 
 namespace core
 {
