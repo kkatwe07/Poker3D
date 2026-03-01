@@ -30,6 +30,7 @@ namespace core
         private GameStateController _state = new GameStateController();
         private BettingService _betting = new BettingService();
         private HandEvaluatorService _evaluator = new HandEvaluatorService();
+        private AiService _aiService;
 
         // private lists & dictionaries
         private List<PlayerModel> _players = new();
@@ -51,14 +52,19 @@ namespace core
         public Action<string, float> OnWinnerMessage;
         public Action<int, int, int> OnBetButtonsUpdate;
         public Action<bool> OnTurnChanged;
+        
+        // track local player and opponent
+        private PlayerModel LocalPlayer => _players.Find(p => p.IsLocal);
+        private PlayerModel Opponent => _players.Find(p => !p.IsLocal);
 
         void Start()
         {
             // Create player and AI
-            _players.Add(new PlayerModel { Name = "Player" });
-            _players.Add(new PlayerModel { Name = "AI", IsAI = true, Chips = 1000 });
+            _players.Add(new PlayerModel { PlayerId = 0, Name = "Player", IsLocal = true });
+            _players.Add(new PlayerModel { PlayerId = 1, Name = "AI", IsAI = true, Chips = 1000 });
 
             turnManager.Init(this, uiManager);
+            _aiService = new AiService(_evaluator);
             _state.OnStateChanged += HandleStateChange;
 
             StartGame();
@@ -70,8 +76,8 @@ namespace core
         private void StartGame()
         {
             OnWinnerMessage?.Invoke("", 0.1f);// clears winner text
-            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
-            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
+            OnUIUpdate?.Invoke(LocalPlayer, Opponent, _betting.Pot);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, LocalPlayer.Chips);
 
             _deck.CreateDeck();
             _communityCards.Clear();
@@ -94,8 +100,8 @@ namespace core
         /// </summary>
         private void SpawnCards()
         {
-            SpawnHand(_players[0], playerCardArea);
-            SpawnHand(_players[1], aiCardArea);
+            SpawnHand(LocalPlayer, playerCardArea);
+            SpawnHand(Opponent, aiCardArea);
         }
 
         /// <summary>
@@ -230,9 +236,9 @@ namespace core
         {
             if (_currentTurn != TurnOwner.Player) return;
 
-            _players[0].Folded = true;
+            LocalPlayer.Folded = true;
 
-            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
+            OnUIUpdate?.Invoke(LocalPlayer, Opponent, _betting.Pot);
             OnStateMessage?.Invoke("Player Folds", 1.5f);
             OnWinnerMessage?.Invoke("AI Wins!", 3f);
             OnTurnChanged?.Invoke(false);
@@ -244,7 +250,7 @@ namespace core
                 view.SetTexture(cardDB.cardBack);
             }
 
-            AwardPotTo(_players[1]);
+            AwardPotTo(Opponent);
             turnManager.StopTimer();
         }
 
@@ -255,9 +261,9 @@ namespace core
         {
             if (_currentTurn != TurnOwner.Player) return;
 
-            _betting.PlaceBet(_players[0], _currentBet);
-            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
-            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
+            _betting.PlaceBet(LocalPlayer, _currentBet);
+            OnUIUpdate?.Invoke(LocalPlayer, Opponent, _betting.Pot);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, LocalPlayer.Chips);
             EndPlayerTurn();
         }
 
@@ -269,9 +275,9 @@ namespace core
             if (_currentTurn != TurnOwner.Player) return;
 
             _currentBet += _raiseAmount;
-            _betting.PlaceBet(_players[0], _currentBet);
-            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
-            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
+            _betting.PlaceBet(LocalPlayer, _currentBet);
+            OnUIUpdate?.Invoke(LocalPlayer, Opponent, _betting.Pot);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, LocalPlayer.Chips);
             EndPlayerTurn();
         }
     
@@ -280,47 +286,32 @@ namespace core
         /// </summary>
         private void AITurn()
         {
-            if ( _players[1].Folded || _currentTurn != TurnOwner.AI) return;
+            if ( Opponent.Folded || _currentTurn != TurnOwner.AI) return;
             
-            List<Card> aiCards = new(_players[1].Hand);
-            aiCards.AddRange(_communityCards);
-            
-            var eval = _evaluator.EvaluateDetailed(aiCards);
-            long strength = eval.score;
-            
-            // Hand rank tier
-            int handTier = (int)(strength / 1000000000);
+            PlayerAction action = _aiService.DecideAction(Opponent, _communityCards, _currentBet, _raiseAmount);
+            switch (action)
+            {
+                case PlayerAction.Raise:
+                    _currentBet += _raiseAmount;
+                    OnStateMessage?.Invoke("AI Raises", 1f);
+                    _betting.PlaceBet(Opponent, _currentBet);
+                    break;
 
-            if (handTier >= 6) // Full House+
-            {
-                OnStateMessage?.Invoke("AI Raises", 1f);
-                _currentBet += _raiseAmount;
-                OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
-                _betting.PlaceBet(_players[1], _currentBet);
-            }
-            else if (handTier >= 2) // Pair or better
-            {
-                OnStateMessage?.Invoke("AI Calls", 1f);
-                _betting.PlaceBet(_players[1], _currentBet);
-            }
-            else
-            {
-                // 40% chance to fold weak hands
-                if (Random.value < 0.4f)
-                {
-                    _players[1].Folded = true;
+                case PlayerAction.Call:
+                    _betting.PlaceBet(Opponent, _currentBet);
+                    OnStateMessage?.Invoke("AI Calls", 1f);
+                    break;
+
+                case PlayerAction.Fold:
+                    Opponent.Folded = true;
                     OnStateMessage?.Invoke("AI Folds", 1.5f);
-                    OnWinnerMessage?.Invoke("Player Wins!", 3f);
+                    OnWinnerMessage?.Invoke("Player Wins!", 2.5f);
                     OnTurnChanged?.Invoke(false);
-                    AwardPotTo(_players[0]);
+                    AwardPotTo(LocalPlayer);
                     return;
-                }
-                OnStateMessage?.Invoke("AI Calls", 1f);
-
-                _betting.PlaceBet(_players[1], _currentBet);
             }
 
-            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
+            OnUIUpdate?.Invoke(LocalPlayer, Opponent, _betting.Pot);
             Invoke(nameof(NextState), 1.5f);
         }
 
@@ -332,10 +323,10 @@ namespace core
             _state.SetState(GameState.Showdown);
             RevealAICards();
 
-            List<Card> playerCards = new(_players[0].Hand);
+            List<Card> playerCards = new(LocalPlayer.Hand);
             playerCards.AddRange(_communityCards);
             
-            List<Card> aiCards = new(_players[1].Hand);
+            List<Card> aiCards = new(Opponent.Hand);
             aiCards.AddRange(_communityCards);
 
             var playerEval = _evaluator.EvaluateDetailed(playerCards);
@@ -346,19 +337,19 @@ namespace core
             if (playerEval.score > aiEval.score)
             {
                 winnerText = $"Player Wins with {playerEval.name}";
-                AwardPotTo(_players[0]);
+                AwardPotTo(LocalPlayer);
                 HighlightWinningCards(playerEval.bestCards);
             }
             else if (aiEval.score > playerEval.score)
             {
                 winnerText = $"AI Wins with {aiEval.name}";
-                AwardPotTo(_players[1]);
+                AwardPotTo(Opponent);
                 HighlightWinningCards(aiEval.bestCards);
             }
             else
             {
                 winnerText = "It's a Tie!";
-                AwardPotToBothWhenTie(_players[0], _players[1]);
+                AwardPotToBothWhenTie(LocalPlayer, Opponent);
             }
             OnStateMessage?.Invoke($"Player: {playerEval.name}\nAI: {aiEval.name}", 3f);
             OnWinnerMessage?.Invoke(winnerText, 3f);
@@ -391,7 +382,7 @@ namespace core
             for (int i = 0; i < _aiCardObjects.Count; i++)
             {
                 var view = _aiCardObjects[i].GetComponent<CardView>();
-                view.SetTexture(cardDB.GetTexture(_players[1].Hand[i]));
+                view.SetTexture(cardDB.GetTexture(Opponent.Hand[i]));
             }
         }
         
@@ -404,8 +395,8 @@ namespace core
             _betting.ResetPot();
             _currentBet = 10;
 
-            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
-            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, LocalPlayer.Chips);
+            OnUIUpdate?.Invoke(LocalPlayer, Opponent, _betting.Pot);
         }
 
         /// <summary>
@@ -419,9 +410,9 @@ namespace core
 
             _betting.ResetPot();
             _currentBet = 10;
-            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, LocalPlayer.Chips);
             
-            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
+            OnUIUpdate?.Invoke(LocalPlayer, Opponent, _betting.Pot);
         }
 
         /// <summary>
