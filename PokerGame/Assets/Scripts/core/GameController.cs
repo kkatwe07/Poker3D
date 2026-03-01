@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using DG.Tweening;
 using models;
@@ -5,6 +6,7 @@ using service;
 using UnityEngine;
 using Utils;
 using view;
+using Random = UnityEngine.Random;
 
 namespace core
 {
@@ -40,8 +42,15 @@ namespace core
         private int _currentBet = 10;
         private int _raiseAmount = 20;
         
-        //Tracks whose turn it is
+        // Tracks whose turn it is
         private TurnOwner _currentTurn;
+        
+        // Action events
+        public Action<PlayerModel, PlayerModel, int> OnUIUpdate;
+        public Action<string, float> OnStateMessage;
+        public Action<string, float> OnWinnerMessage;
+        public Action<int, int, int> OnBetButtonsUpdate;
+        public Action<bool> OnTurnChanged;
 
         void Start()
         {
@@ -60,9 +69,9 @@ namespace core
         /// </summary>
         private void StartGame()
         {
-            uiManager.ShowWinnerText("", 0.1f); // clear winner text
-            uiManager.UpdateUI(_players[0], _players[1], _betting.Pot);
-            uiManager.UpdateBetButtons(_currentBet, _raiseAmount, _players[0].Chips);
+            OnWinnerMessage?.Invoke("", 0.1f);// clears winner text
+            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
 
             _deck.CreateDeck();
             _communityCards.Clear();
@@ -199,7 +208,7 @@ namespace core
         private void StartPlayerTurn()
         {
             _currentTurn = TurnOwner.Player;
-            uiManager.SetPlayerTurn(true);
+            OnTurnChanged?.Invoke(true);
             turnManager.StartTimer();
         }
 
@@ -210,7 +219,7 @@ namespace core
         {
             turnManager.StopTimer();
             _currentTurn = TurnOwner.AI;
-            uiManager.SetPlayerTurn(false);
+            OnTurnChanged?.Invoke(false);
             Invoke(nameof(AITurn), 1f);
         }
     
@@ -223,10 +232,10 @@ namespace core
 
             _players[0].Folded = true;
 
-            uiManager.UpdateUI(_players[0], _players[1], _betting.Pot);
-            uiManager.AnimateStateText("Player Folds", 1.5f);
-            uiManager.ShowWinnerText("AI Wins!", 3f);
-            uiManager.SetPlayerTurn(false);
+            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
+            OnStateMessage?.Invoke("Player Folds", 1.5f);
+            OnWinnerMessage?.Invoke("AI Wins!", 3f);
+            OnTurnChanged?.Invoke(false);
 
             // Flip player cards face down
             foreach (var c in _playerCardObjects)
@@ -247,8 +256,8 @@ namespace core
             if (_currentTurn != TurnOwner.Player) return;
 
             _betting.PlaceBet(_players[0], _currentBet);
-            uiManager.UpdateUI(_players[0], _players[1], _betting.Pot);
-            uiManager.UpdateBetButtons(_currentBet, _raiseAmount, _players[0].Chips);
+            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
             EndPlayerTurn();
         }
 
@@ -261,8 +270,8 @@ namespace core
 
             _currentBet += _raiseAmount;
             _betting.PlaceBet(_players[0], _currentBet);
-            uiManager.UpdateUI(_players[0], _players[1], _betting.Pot);
-            uiManager.UpdateBetButtons(_currentBet, _raiseAmount, _players[0].Chips);
+            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
             EndPlayerTurn();
         }
     
@@ -284,14 +293,14 @@ namespace core
 
             if (handTier >= 6) // Full House+
             {
-                uiManager.AnimateStateText("AI Raises", 1f);
+                OnStateMessage?.Invoke("AI Raises", 1f);
                 _currentBet += _raiseAmount;
-                uiManager.UpdateBetButtons(_currentBet, _raiseAmount, _players[0].Chips);
+                OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
                 _betting.PlaceBet(_players[1], _currentBet);
             }
             else if (handTier >= 2) // Pair or better
             {
-                uiManager.AnimateStateText("AI Calls", 1f);
+                OnStateMessage?.Invoke("AI Calls", 1f);
                 _betting.PlaceBet(_players[1], _currentBet);
             }
             else
@@ -300,16 +309,18 @@ namespace core
                 if (Random.value < 0.4f)
                 {
                     _players[1].Folded = true;
-                    uiManager.AnimateStateText("AI Folds", 1.5f);
-                    uiManager.ShowWinnerText("Player Wins!", 3f);
+                    OnStateMessage?.Invoke("AI Folds", 1.5f);
+                    OnWinnerMessage?.Invoke("Player Wins!", 3f);
+                    OnTurnChanged?.Invoke(false);
                     AwardPotTo(_players[0]);
                     return;
                 }
-                uiManager.AnimateStateText("AI Calls", 1f);
+                OnStateMessage?.Invoke("AI Calls", 1f);
+
                 _betting.PlaceBet(_players[1], _currentBet);
             }
 
-            uiManager.UpdateUI(_players[0], _players[1], _betting.Pot);
+            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
             Invoke(nameof(NextState), 1.5f);
         }
 
@@ -349,8 +360,8 @@ namespace core
                 winnerText = "It's a Tie!";
                 AwardPotToBothWhenTie(_players[0], _players[1]);
             }
-            uiManager.AnimateStateText($"Player: {playerEval.name}\nAI: {aiEval.name}", 4f);
-            uiManager.ShowWinnerText(winnerText, 3f);
+            OnStateMessage?.Invoke($"Player: {playerEval.name}\nAI: {aiEval.name}", 3f);
+            OnWinnerMessage?.Invoke(winnerText, 3f);
         }
 
         /// <summary>
@@ -393,9 +404,8 @@ namespace core
             _betting.ResetPot();
             _currentBet = 10;
 
-            uiManager.UpdateBetButtons(_currentBet, _raiseAmount, _players[0].Chips);
-            uiManager.AnimatePotText();
-            uiManager.UpdateUI(_players[0], _players[1], _betting.Pot);
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
+            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
         }
 
         /// <summary>
@@ -409,10 +419,9 @@ namespace core
 
             _betting.ResetPot();
             _currentBet = 10;
-            uiManager.UpdateBetButtons(_currentBet, _raiseAmount, _players[0].Chips);
-            uiManager.AnimatePotText();
+            OnBetButtonsUpdate?.Invoke(_currentBet, _raiseAmount, _players[0].Chips);
             
-            uiManager.UpdateUI(_players[0], _players[1], _betting.Pot);
+            OnUIUpdate?.Invoke(_players[0], _players[1], _betting.Pot);
         }
 
         /// <summary>

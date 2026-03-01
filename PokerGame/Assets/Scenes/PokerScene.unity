@@ -411,7 +411,7 @@ MonoBehaviour:
   callButtonText: {fileID: 1054049569}
   raiseButtonText: {fileID: 1997757167}
   buttonsPanel: {fileID: 226882577}
-  gameController: {fileID: 663023490}
+  game: {fileID: 663023490}
 --- !u!1 &167339713
 GameObject:
   m_ObjectHideFlags: 0

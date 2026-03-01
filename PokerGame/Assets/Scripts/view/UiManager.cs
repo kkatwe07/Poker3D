@@ -27,12 +27,30 @@ namespace view
         [SerializeField] private GameObject buttonsPanel;
 
         [Header("Instance of the Game Controller")]
-        [SerializeField] private GameController gameController;
+        [SerializeField] private GameController game;
 
         private void Start()
         {
             stateText.gameObject.SetActive(false);
             winnerText.gameObject.SetActive(false);
+        }
+        
+        private void OnEnable()
+        {
+            game.OnUIUpdate += UpdateUI;
+            game.OnStateMessage += AnimateStateText;
+            game.OnWinnerMessage += ShowWinnerText;
+            game.OnBetButtonsUpdate += UpdateBetButtons;
+            game.OnTurnChanged += SetPlayerTurn;
+        }
+
+        private void OnDisable()
+        {
+            game.OnUIUpdate -= UpdateUI;
+            game.OnStateMessage -= AnimateStateText;
+            game.OnWinnerMessage -= ShowWinnerText;
+            game.OnBetButtonsUpdate -= UpdateBetButtons;
+            game.OnTurnChanged -= SetPlayerTurn;
         }
     
         /// <summary>
@@ -48,7 +66,7 @@ namespace view
         /// </summary>
         public void OnFold()
         {
-            gameController.PlayerFold();
+            game.PlayerFold();
         }
 
         /// <summary>
@@ -56,7 +74,7 @@ namespace view
         /// </summary>
         public void OnCall()
         {
-            gameController.PlayerCall();
+            game.PlayerCall();
         }
 
         /// <summary>
@@ -64,7 +82,7 @@ namespace view
         /// </summary>
         public void OnRaise()
         {
-            gameController.PlayerRaise();
+            game.PlayerRaise();
         }
 
         /// <summary>
@@ -72,7 +90,7 @@ namespace view
         /// </summary>
         public void OnRestart()
         {
-            gameController.RestartGame();
+            game.RestartGame();
         }
     
         /// <summary>
@@ -124,6 +142,8 @@ namespace view
             winnerText.text = msg;
             winnerText.DOFade(1f, 0f);
             winnerText.gameObject.SetActive(true);
+            
+            AnimatePotText();
 
             winnerText.transform
                 .DOScale(1.3f, duration)
